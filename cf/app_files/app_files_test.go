@@ -54,9 +54,10 @@ var _ = Describe("AppFiles", func() {
 			appPath := filepath.Join(fixturePath, "app-with-cfignore-and-gitignore")
 
 			// cp gitignore to .gitignore because we can't check it into repo with that name and also commit files
+			escapedGitignorePath := filepath.Join(fixturePath, "gitignore")
 			gitignorePath := filepath.Join(fixturePath, ".gitignore")
-			os.Link(filepath.Join(fixturePath, "gitignore"), gitignorePath)
-			defer os.Remove(gitignorePath)
+			os.Rename(escapedGitignorePath, gitignorePath)
+			defer os.Rename(gitignorePath, escapedGitignorePath)
 
 			files, err := appFiles.AppFilesInDir(appPath)
 			Expect(err).ShouldNot(HaveOccurred())
