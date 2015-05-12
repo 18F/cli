@@ -139,20 +139,18 @@ func copyPathToPath(fromPath, toPath string) (err error) {
 
 func loadIgnoreFile(dir string) CfIgnore {
 	fileContents, err := ioutil.ReadFile(filepath.Join(dir, ".cfignore"))
-	var out CfIgnore
 
 	if err == nil {
-		out = NewCfIgnore(string(fileContents))
+		return NewCfIgnore(string(fileContents))
 	} else {
-		out = NewCfIgnore("")
+		// FIXME: Should we extend to other VCS systems beyond .gitignore
+		gitContents, err2 := ioutil.ReadFile(filepath.Join(dir, ".gitignore"))
+		if err2 == nil {
+			// This works because .cfignore is same format as .gitignore
+			return NewCfIgnore(string(gitContents))
+		} else {
+			return NewCfIgnore("")
+		}
 	}
 
-	// FIXME: Should we extend to other VCS systems beyond .gitignore
-	gitContents, err2 := ioutil.ReadFile(filepath.Join(dir, ".gitignore"))
-	if err2 == nil {
-		// This works because .cfignore is same format as .gitignore
-		out = out.WithMoreIgnorePaths(string(gitContents))
-	}
-
-	return out
 }

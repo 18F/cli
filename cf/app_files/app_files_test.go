@@ -51,7 +51,7 @@ var _ = Describe("AppFiles", func() {
 		})
 
 		It("excludes files based on the .gitignore file", func() {
-			appPath := filepath.Join(fixturePath, "app-with-cfignore-and-gitignore")
+			appPath := filepath.Join(fixturePath, "app-with-gitignore")
 
 			// cp gitignore to .gitignore because we can't check it into repo with that name and also commit files
 			escapedGitignorePath := filepath.Join(appPath, "gitignore")
