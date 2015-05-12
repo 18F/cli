@@ -143,14 +143,14 @@ func loadIgnoreFile(dir string) CfIgnore {
 	if err == nil {
 		return NewCfIgnore(string(fileContents))
 	} else {
-		// FIXME: Should we extend to other VCS systems beyond .gitignore
+		// LATER: Should we extend to other VCS systems beyond .gitignore
 		gitContents, err2 := ioutil.ReadFile(filepath.Join(dir, ".gitignore"))
 		if err2 == nil {
 			// This works because .cfignore is same format as .gitignore
 			return NewCfIgnore(string(gitContents))
-		} else {
-			return NewCfIgnore("")
 		}
 	}
 
+	// otherwise, just use default config with a few basics
+	return NewCfIgnore("")
 }
