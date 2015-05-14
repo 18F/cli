@@ -62,8 +62,8 @@ var _ = Describe("Configuration Repository", func() {
 		config.SetAuthenticationEndpoint("http://auth.the-endpoint")
 		Expect(config.AuthenticationEndpoint()).To(Equal("http://auth.the-endpoint"))
 
-		config.SetLoggregatorEndpoint("http://logs.the-endpoint")
-		Expect(config.LoggregatorEndpoint()).To(Equal("http://logs.the-endpoint"))
+		config.SetLoggregatorEndpoint("http://loggregator.the-endpoint")
+		Expect(config.LoggregatorEndpoint()).To(Equal("http://loggregator.the-endpoint"))
 
 		config.SetDopplerEndpoint("http://doppler.the-endpoint")
 		Expect(config.DopplerEndpoint()).To(Equal("http://doppler.the-endpoint"))
@@ -96,6 +96,13 @@ var _ = Describe("Configuration Repository", func() {
 		Expect(config.PluginRepos()[0].Url).To(Equal("nowhere.com"))
 
 		Expect(config.IsMinApiVersion("3.1")).To(Equal(false))
+
+		config.SetMinCliVersion("6.0.0")
+		Expect(config.IsMinCliVersion("5.0.0")).To(Equal(false))
+		Expect(config.MinCliVersion()).To(Equal("6.0.0"))
+
+		config.SetMinRecommendedCliVersion("6.9.0")
+		Expect(config.MinRecommendedCliVersion()).To(Equal("6.9.0"))
 	})
 
 	Describe("HasAPIEndpoint", func() {

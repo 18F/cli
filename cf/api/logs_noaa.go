@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"sync"
 	"time"
 
 	. "github.com/cloudfoundry/cli/cf/i18n"
@@ -30,6 +31,7 @@ type logNoaaRepository struct {
 	onMessage      func(*events.LogMessage)
 	doneChan       chan struct{}
 	tailing        bool
+	mutexLock      sync.Mutex
 }
 
 var BufferTime time.Duration = 5 * time.Second
@@ -44,8 +46,9 @@ func NewLogsNoaaRepository(config core_config.Reader, consumer NoaaConsumer, tr 
 }
 
 func (l *logNoaaRepository) Close() {
+	l.mutexLock.Lock()
+	defer l.mutexLock.Unlock()
 	l.tailing = false
-	defer l.consumer.Close()
 	l.flushMessageQueue()
 	close(l.doneChan)
 }
@@ -86,9 +89,13 @@ func (l *logNoaaRepository) RecentLogsFor(appGuid string) ([]*events.LogMessage,
 }
 
 func (l *logNoaaRepository) TailNoaaLogsFor(appGuid string, onConnect func(), onMessage func(*events.LogMessage)) error {
+	l.mutexLock.Lock()
+	var hasReauthed bool
 	l.doneChan = make(chan struct{})
 	l.tailing = true
 	l.onMessage = onMessage
+	l.mutexLock.Unlock()
+
 	endpoint := l.config.DopplerEndpoint()
 	if endpoint == "" {
 		return errors.New(T("Loggregator endpoint missing from config file"))
@@ -96,28 +103,32 @@ func (l *logNoaaRepository) TailNoaaLogsFor(appGuid string, onConnect func(), on
 
 	l.consumer.SetOnConnectCallback(onConnect)
 
+	var stopChan chan struct{}
 	logChan := make(chan *events.LogMessage)
 	errChan := make(chan error)
-	closeChan := make(chan struct{})
-	go l.consumer.TailingLogs(appGuid, l.config.AccessToken(), logChan, errChan, closeChan)
+	stopChan = make(chan struct{})
+	go l.consumer.TailingLogs(appGuid, l.config.AccessToken(), logChan, errChan, stopChan)
 
 	for {
 		sendNoaaMessages(l.messageQueue, onMessage)
 
 		select {
 		case <-l.doneChan:
+			l.stopNoaa(stopChan)
 			return nil
 		case err := <-errChan:
 			switch err.(type) {
 			case nil: // do nothing
 			case *noaa_errors.UnauthorizedError:
-				if closeChan != nil {
+				if !hasReauthed {
 					l.tokenRefresher.RefreshAuthToken()
-					close(closeChan)
-					closeChan = nil
-					go l.consumer.TailingLogs(appGuid, l.config.AccessToken(), logChan, errChan, make(chan struct{}))
+					hasReauthed = true
+					l.stopNoaa(stopChan)
+					time.Sleep(100 * time.Millisecond) //wait a little before retrying
+					stopChan = make(chan struct{})
+					go l.consumer.TailingLogs(appGuid, l.config.AccessToken(), logChan, errChan, stopChan)
 				} else {
-					l.Close()
+					l.stopNoaa(stopChan)
 					return err
 				}
 			default:
@@ -133,6 +144,11 @@ func (l *logNoaaRepository) TailNoaaLogsFor(appGuid string, onConnect func(), on
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
+}
+
+func (l *logNoaaRepository) stopNoaa(stopChan chan struct{}) {
+	close(stopChan)
+	l.consumer.Close()
 }
 
 func sendNoaaMessages(queue *SortedMessageQueue, onMessage func(*events.LogMessage)) {

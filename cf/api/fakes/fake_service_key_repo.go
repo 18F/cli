@@ -1,25 +1,74 @@
 package fakes
 
-type FakeServiceKeyRepo struct {
-	CreateServiceKeyError error
+import (
+	"github.com/cloudfoundry/cli/cf/models"
+)
 
-	CreateServiceKeyArgs CreateServiceKeyArgsType
+type FakeServiceKeyRepo struct {
+	CreateServiceKeyMethod CreateServiceKeyType
+	ListServiceKeysMethod  ListServiceKeysType
+	GetServiceKeyMethod    GetServiceKeyType
+	DeleteServiceKeyMethod DeleteServiceKeyType
 }
 
-type CreateServiceKeyArgsType struct {
-	ServiceInstanceId string
-	ServiceKeyName    string
+type CreateServiceKeyType struct {
+	InstanceGuid string
+	KeyName      string
+
+	Error error
+}
+
+type ListServiceKeysType struct {
+	InstanceGuid string
+
+	ServiceKeys []models.ServiceKey
+	Error       error
+}
+
+type GetServiceKeyType struct {
+	InstanceGuid string
+	KeyName      string
+
+	ServiceKey models.ServiceKey
+	Error      error
+}
+
+type DeleteServiceKeyType struct {
+	Guid string
+
+	Error error
 }
 
 func NewFakeServiceKeyRepo() *FakeServiceKeyRepo {
 	return &FakeServiceKeyRepo{
-		CreateServiceKeyArgs: CreateServiceKeyArgsType{},
+		CreateServiceKeyMethod: CreateServiceKeyType{},
+		ListServiceKeysMethod:  ListServiceKeysType{},
+		GetServiceKeyMethod:    GetServiceKeyType{},
+		DeleteServiceKeyMethod: DeleteServiceKeyType{},
 	}
 }
 
-func (f *FakeServiceKeyRepo) CreateServiceKey(instanceId string, serviceKeyName string) (apiErr error) {
-	f.CreateServiceKeyArgs.ServiceInstanceId = instanceId
-	f.CreateServiceKeyArgs.ServiceKeyName = serviceKeyName
+func (f *FakeServiceKeyRepo) CreateServiceKey(instanceGuid string, serviceKeyName string) error {
+	f.CreateServiceKeyMethod.InstanceGuid = instanceGuid
+	f.CreateServiceKeyMethod.KeyName = serviceKeyName
 
-	return f.CreateServiceKeyError
+	return f.CreateServiceKeyMethod.Error
+}
+
+func (f *FakeServiceKeyRepo) ListServiceKeys(instanceGuid string) ([]models.ServiceKey, error) {
+	f.ListServiceKeysMethod.InstanceGuid = instanceGuid
+
+	return f.ListServiceKeysMethod.ServiceKeys, f.ListServiceKeysMethod.Error
+}
+
+func (f *FakeServiceKeyRepo) GetServiceKey(instanceGuid string, serviceKeyName string) (models.ServiceKey, error) {
+	f.GetServiceKeyMethod.InstanceGuid = instanceGuid
+
+	return f.GetServiceKeyMethod.ServiceKey, f.GetServiceKeyMethod.Error
+}
+
+func (f *FakeServiceKeyRepo) DeleteServiceKey(serviceKeyGuid string) error {
+	f.DeleteServiceKeyMethod.Guid = serviceKeyGuid
+
+	return f.DeleteServiceKeyMethod.Error
 }

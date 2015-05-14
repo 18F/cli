@@ -19,6 +19,7 @@ import (
 	testlogs "github.com/cloudfoundry/cli/testhelpers/logs"
 	testreq "github.com/cloudfoundry/cli/testhelpers/requirements"
 	testterm "github.com/cloudfoundry/cli/testhelpers/terminal"
+	"github.com/cloudfoundry/loggregatorlib/logmessage"
 	"github.com/cloudfoundry/noaa/events"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -35,6 +36,8 @@ var _ = Describe("start command", func() {
 		requirementsFactory       *testreq.FakeReqFactory
 		logsForTail               []*events.LogMessage
 		logRepo                   *testapi.FakeLogsNoaaRepository
+		oldLogsForTail            []*logmessage.LogMessage
+		oldLogsRepo               *testapi.FakeOldLogsRepository
 	)
 
 	getInstance := func(appGuid string) (instances []models.AppInstanceFields, apiErr error) {
@@ -63,6 +66,7 @@ var _ = Describe("start command", func() {
 		defaultAppForStart.Name = "my-app"
 		defaultAppForStart.Guid = "my-app-guid"
 		defaultAppForStart.InstanceCount = 2
+		defaultAppForStart.PackageState = "STAGED"
 
 		domain := models.DomainFields{}
 		domain.Name = "example.com"
@@ -91,6 +95,16 @@ var _ = Describe("start command", func() {
 			[]models.AppInstanceFields{instance3, instance4},
 		}
 
+		oldLogsRepo = &testapi.FakeOldLogsRepository{}
+		oldLogsForTail = []*logmessage.LogMessage{}
+		oldLogsRepo.TailLogsForStub = func(appGuid string, onConnect func(), onMessage func(*logmessage.LogMessage)) error {
+			onConnect()
+			for _, log := range oldLogsForTail {
+				onMessage(log)
+			}
+			return nil
+		}
+
 		logsForTail = []*events.LogMessage{}
 		logRepo = new(testapi.FakeLogsNoaaRepository)
 		logRepo.TailNoaaLogsForStub = func(appGuid string, onConnect func(), onMessage func(*events.LogMessage)) error {
@@ -102,10 +116,10 @@ var _ = Describe("start command", func() {
 		}
 	})
 
-	callStart := func(args []string, config core_config.Reader, requirementsFactory *testreq.FakeReqFactory, displayApp ApplicationDisplayer, appRepo applications.ApplicationRepository, appInstancesRepo app_instances.AppInstancesRepository, logRepo api.LogsNoaaRepository) (ui *testterm.FakeUI) {
+	callStart := func(args []string, config core_config.Reader, requirementsFactory *testreq.FakeReqFactory, displayApp ApplicationDisplayer, appRepo applications.ApplicationRepository, appInstancesRepo app_instances.AppInstancesRepository, logRepo api.LogsNoaaRepository, oldLogsRepo api.OldLogsRepository) (ui *testterm.FakeUI) {
 		ui = new(testterm.FakeUI)
 
-		cmd := NewStart(ui, config, displayApp, appRepo, appInstancesRepo, logRepo)
+		cmd := NewStart(ui, config, displayApp, appRepo, appInstancesRepo, logRepo, oldLogsRepo)
 		cmd.StagingTimeout = 100 * time.Millisecond
 		cmd.StartupTimeout = 200 * time.Millisecond
 		cmd.PingerThrottle = 50 * time.Millisecond
@@ -120,37 +134,38 @@ var _ = Describe("start command", func() {
 			UpdateAppResult: app,
 		}
 		appRepo.ReadReturns.App = app
+		appRepo.GetAppReturns(app, nil)
 		appInstancesRepo = &testAppInstanaces.FakeAppInstancesRepository{}
 		appInstancesRepo.GetInstancesStub = getInstance
 
 		logsForTail = []*events.LogMessage{
-			testlogs.NewLogMessage("Log Line 1", app.Guid, LogMessageTypeStaging, time.Now()),
-			testlogs.NewLogMessage("Log Line 2", app.Guid, LogMessageTypeStaging, time.Now()),
+			testlogs.NewNoaaLogMessage("Log Line 1", app.Guid, LogMessageTypeStaging, time.Now()),
+			testlogs.NewNoaaLogMessage("Log Line 2", app.Guid, LogMessageTypeStaging, time.Now()),
 		}
 
 		args := []string{"my-app"}
 
 		requirementsFactory.Application = app
-		ui = callStart(args, configRepo, requirementsFactory, displayApp, appRepo, appInstancesRepo, logRepo)
+		ui = callStart(args, configRepo, requirementsFactory, displayApp, appRepo, appInstancesRepo, logRepo, oldLogsRepo)
 		return
 	}
 
 	It("fails requirements when not logged in", func() {
 		requirementsFactory.LoginSuccess = false
-		cmd := NewStart(new(testterm.FakeUI), testconfig.NewRepository(), &testcmd.FakeAppDisplayer{}, &testApplication.FakeApplicationRepository{}, &testAppInstanaces.FakeAppInstancesRepository{}, &testapi.FakeLogsNoaaRepository{})
+		cmd := NewStart(new(testterm.FakeUI), testconfig.NewRepository(), &testcmd.FakeAppDisplayer{}, &testApplication.FakeApplicationRepository{}, &testAppInstanaces.FakeAppInstancesRepository{}, &testapi.FakeLogsNoaaRepository{}, &testapi.FakeOldLogsRepository{})
 
 		Expect(testcmd.RunCommand(cmd, []string{"some-app-name"}, requirementsFactory)).To(BeFalse())
 	})
 	It("fails requirements when a space is not targeted", func() {
 		requirementsFactory.LoginSuccess = true
 		requirementsFactory.TargetedSpaceSuccess = false
-		cmd := NewStart(new(testterm.FakeUI), testconfig.NewRepository(), &testcmd.FakeAppDisplayer{}, &testApplication.FakeApplicationRepository{}, &testAppInstanaces.FakeAppInstancesRepository{}, &testapi.FakeLogsNoaaRepository{})
+		cmd := NewStart(new(testterm.FakeUI), testconfig.NewRepository(), &testcmd.FakeAppDisplayer{}, &testApplication.FakeApplicationRepository{}, &testAppInstanaces.FakeAppInstancesRepository{}, &testapi.FakeLogsNoaaRepository{}, &testapi.FakeOldLogsRepository{})
 		Expect(testcmd.RunCommand(cmd, []string{"some-app-name"}, requirementsFactory)).To(BeFalse())
 	})
 
 	Describe("timeouts", func() {
 		It("has sane default timeout values", func() {
-			cmd := NewStart(new(testterm.FakeUI), testconfig.NewRepository(), &testcmd.FakeAppDisplayer{}, &testApplication.FakeApplicationRepository{}, &testAppInstanaces.FakeAppInstancesRepository{}, &testapi.FakeLogsNoaaRepository{})
+			cmd := NewStart(new(testterm.FakeUI), testconfig.NewRepository(), &testcmd.FakeAppDisplayer{}, &testApplication.FakeApplicationRepository{}, &testAppInstanaces.FakeAppInstancesRepository{}, &testapi.FakeLogsNoaaRepository{}, &testapi.FakeOldLogsRepository{})
 			Expect(cmd.StagingTimeout).To(Equal(15 * time.Minute))
 			Expect(cmd.StartupTimeout).To(Equal(5 * time.Minute))
 		})
@@ -165,7 +180,7 @@ var _ = Describe("start command", func() {
 
 			os.Setenv("CF_STAGING_TIMEOUT", "6")
 			os.Setenv("CF_STARTUP_TIMEOUT", "3")
-			cmd := NewStart(new(testterm.FakeUI), testconfig.NewRepository(), &testcmd.FakeAppDisplayer{}, &testApplication.FakeApplicationRepository{}, &testAppInstanaces.FakeAppInstancesRepository{}, &testapi.FakeLogsNoaaRepository{})
+			cmd := NewStart(new(testterm.FakeUI), testconfig.NewRepository(), &testcmd.FakeAppDisplayer{}, &testApplication.FakeApplicationRepository{}, &testAppInstanaces.FakeAppInstancesRepository{}, &testapi.FakeLogsNoaaRepository{}, &testapi.FakeOldLogsRepository{})
 			Expect(cmd.StagingTimeout).To(Equal(6 * time.Minute))
 			Expect(cmd.StartupTimeout).To(Equal(3 * time.Minute))
 		})
@@ -179,13 +194,14 @@ var _ = Describe("start command", func() {
 			BeforeEach(func() {
 				app = defaultAppForStart
 
-				instances := []models.AppInstanceFields{models.AppInstanceFields{}}
 				appRepo := &testApplication.FakeApplicationRepository{
 					UpdateAppResult: app,
 				}
-				appRepo.ReadReturns.App = app
+
+				app.PackageState = "FAILED"
+				app.StagingFailedReason = "BLAH, FAILED"
+				appRepo.GetAppReturns(app, nil)
 				appInstancesRepo := &testAppInstanaces.FakeAppInstancesRepository{}
-				appInstancesRepo.GetInstancesReturns(instances, errors.New("Error staging app"))
 
 				requirementsFactory.LoginSuccess = true
 				requirementsFactory.TargetedSpaceSuccess = true
@@ -193,8 +209,8 @@ var _ = Describe("start command", func() {
 				config := testconfig.NewRepository()
 				displayApp := &testcmd.FakeAppDisplayer{}
 
-				cmd = NewStart(ui, config, displayApp, appRepo, appInstancesRepo, logRepo)
-				cmd.StagingTimeout = 1
+				cmd = NewStart(ui, config, displayApp, appRepo, appInstancesRepo, logRepo, oldLogsRepo)
+				cmd.StagingTimeout = 0
 				cmd.PingerThrottle = 1
 				cmd.StartupTimeout = 1
 			})
@@ -205,7 +221,7 @@ var _ = Describe("start command", func() {
 				Expect(ui.Outputs).To(ContainSubstrings(
 					[]string{"my-app"},
 					[]string{"FAILED"},
-					[]string{"Error staging app"},
+					[]string{"BLAH, FAILED"},
 				))
 			})
 		})
@@ -222,9 +238,10 @@ var _ = Describe("start command", func() {
 			displayApp := &testcmd.FakeAppDisplayer{}
 			appRepo := &testApplication.FakeApplicationRepository{}
 			appInstancesRepo := &testAppInstanaces.FakeAppInstancesRepository{}
+			oldLogsRepo = &testapi.FakeOldLogsRepository{}
 			logRepo := &testapi.FakeLogsNoaaRepository{}
 
-			ui := callStart([]string{}, config, requirementsFactory, displayApp, appRepo, appInstancesRepo, logRepo)
+			ui := callStart([]string{}, config, requirementsFactory, displayApp, appRepo, appInstancesRepo, logRepo, oldLogsRepo)
 			Expect(ui.FailedWithUsage).To(BeTrue())
 		})
 
@@ -235,10 +252,11 @@ var _ = Describe("start command", func() {
 			appInstancesRepo := &testAppInstanaces.FakeAppInstancesRepository{}
 
 			appRepo.ReadReturns.App = defaultAppForStart
+			appRepo.GetAppReturns(defaultAppForStart, nil)
 			appInstancesRepo = &testAppInstanaces.FakeAppInstancesRepository{}
 			appInstancesRepo.GetInstancesStub = getInstance
 
-			cmd := NewStart(ui, config, displayApp, appRepo, appInstancesRepo, logRepo)
+			cmd := NewStart(ui, config, displayApp, appRepo, appInstancesRepo, logRepo, oldLogsRepo)
 			cmd.StagingTimeout = 100 * time.Millisecond
 			cmd.StartupTimeout = 200 * time.Millisecond
 			cmd.PingerThrottle = 50 * time.Millisecond
@@ -271,6 +289,7 @@ var _ = Describe("start command", func() {
 			defaultAppForStart.DetectedStartCommand = "detected start command"
 			displayApp := &testcmd.FakeAppDisplayer{}
 			ui, appRepo, _ := startAppWithInstancesAndErrors(displayApp, defaultAppForStart, requirementsFactory)
+			appRepo.GetAppReturns(defaultAppForStart, nil)
 
 			Expect(appRepo.ReadCalls).To(Equal(1))
 			Expect(ui.Outputs).To(ContainSubstrings(
@@ -304,14 +323,21 @@ var _ = Describe("start command", func() {
 			wrongSourceName := "DEA"
 			correctSourceName := "STG"
 
-			logsForTail = []*events.LogMessage{
-				testlogs.NewLogMessage("Log Line 1", defaultAppForStart.Guid, wrongSourceName, currentTime),
-				testlogs.NewLogMessage("Log Line 2", defaultAppForStart.Guid, correctSourceName, currentTime),
-				testlogs.NewLogMessage("Log Line 3", defaultAppForStart.Guid, correctSourceName, currentTime),
-				testlogs.NewLogMessage("Log Line 4", defaultAppForStart.Guid, wrongSourceName, currentTime),
+			oldLogsForTail = []*logmessage.LogMessage{
+				testlogs.NewOldLogMessage("Log Line 1", defaultAppForStart.Guid, wrongSourceName, currentTime),
+				testlogs.NewOldLogMessage("Log Line 2", defaultAppForStart.Guid, correctSourceName, currentTime),
+				testlogs.NewOldLogMessage("Log Line 3", defaultAppForStart.Guid, correctSourceName, currentTime),
+				testlogs.NewOldLogMessage("Log Line 4", defaultAppForStart.Guid, wrongSourceName, currentTime),
 			}
 
-			ui := callStart([]string{"my-app"}, testconfig.NewRepository(), requirementsFactory, displayApp, appRepo, appInstancesRepo, logRepo)
+			logsForTail = []*events.LogMessage{
+				testlogs.NewNoaaLogMessage("Log Line 1", defaultAppForStart.Guid, wrongSourceName, currentTime),
+				testlogs.NewNoaaLogMessage("Log Line 2", defaultAppForStart.Guid, correctSourceName, currentTime),
+				testlogs.NewNoaaLogMessage("Log Line 3", defaultAppForStart.Guid, correctSourceName, currentTime),
+				testlogs.NewNoaaLogMessage("Log Line 4", defaultAppForStart.Guid, wrongSourceName, currentTime),
+			}
+
+			ui := callStart([]string{"my-app"}, testconfig.NewRepository(), requirementsFactory, displayApp, appRepo, appInstancesRepo, logRepo, oldLogsRepo)
 
 			Expect(ui.Outputs).To(ContainSubstrings(
 				[]string{"Log Line 2"},
@@ -328,17 +354,34 @@ var _ = Describe("start command", func() {
 
 			logRepoClosed := make(chan struct{})
 
-			logRepo.TailNoaaLogsForStub = func(appGuid string, onConnect func(), onMessage func(*events.LogMessage)) error {
+			oldLogsRepo.TailLogsForStub = func(appGuid string, onConnect func(), onMessage func(*logmessage.LogMessage)) error {
 				onConnect()
-				onMessage(testlogs.NewLogMessage("Before close", appGuid, LogMessageTypeStaging, time.Now()))
+				onMessage(testlogs.NewOldLogMessage("Before close", appGuid, LogMessageTypeStaging, time.Now()))
 
 				<-logRepoClosed
 
 				time.Sleep(50 * time.Millisecond)
-				onMessage(testlogs.NewLogMessage("After close 1", appGuid, LogMessageTypeStaging, time.Now()))
-				onMessage(testlogs.NewLogMessage("After close 2", appGuid, LogMessageTypeStaging, time.Now()))
+				onMessage(testlogs.NewOldLogMessage("After close 1", appGuid, LogMessageTypeStaging, time.Now()))
+				onMessage(testlogs.NewOldLogMessage("After close 2", appGuid, LogMessageTypeStaging, time.Now()))
 
 				return nil
+			}
+
+			logRepo.TailNoaaLogsForStub = func(appGuid string, onConnect func(), onMessage func(*events.LogMessage)) error {
+				onConnect()
+				onMessage(testlogs.NewNoaaLogMessage("Before close", appGuid, LogMessageTypeStaging, time.Now()))
+
+				<-logRepoClosed
+
+				time.Sleep(50 * time.Millisecond)
+				onMessage(testlogs.NewNoaaLogMessage("After close 1", appGuid, LogMessageTypeStaging, time.Now()))
+				onMessage(testlogs.NewNoaaLogMessage("After close 2", appGuid, LogMessageTypeStaging, time.Now()))
+
+				return nil
+			}
+
+			oldLogsRepo.CloseStub = func() {
+				close(logRepoClosed)
 			}
 
 			logRepo.CloseStub = func() {
@@ -354,10 +397,10 @@ var _ = Describe("start command", func() {
 			}
 
 			defaultInstanceErrorCodes = []string{errors.APP_NOT_STAGED, errors.APP_NOT_STAGED, "", "", ""}
+			defaultAppForStart.PackageState = "PENDING"
+			ui, appRepo, _ := startAppWithInstancesAndErrors(displayApp, defaultAppForStart, requirementsFactory)
 
-			ui, _, appInstancesRepo := startAppWithInstancesAndErrors(displayApp, defaultAppForStart, requirementsFactory)
-
-			Expect(appInstancesRepo.GetInstancesArgsForCall(0)).To(Equal("my-app-guid"))
+			Expect(appRepo.GetAppArgsForCall(0)).To(Equal("my-app-guid"))
 
 			Expect(ui.Outputs).To(ContainSubstrings(
 				[]string{"Before close"},
@@ -369,15 +412,15 @@ var _ = Describe("start command", func() {
 
 		It("displays an error message when staging fails", func() {
 			displayApp := &testcmd.FakeAppDisplayer{}
-			defaultInstanceResponses = [][]models.AppInstanceFields{[]models.AppInstanceFields{}}
-			defaultInstanceErrorCodes = []string{"170001"}
+			defaultAppForStart.PackageState = "FAILED"
+			defaultAppForStart.StagingFailedReason = "AWWW, FAILED"
 
 			ui, _, _ := startAppWithInstancesAndErrors(displayApp, defaultAppForStart, requirementsFactory)
 
 			Expect(ui.Outputs).To(ContainSubstrings(
 				[]string{"my-app"},
 				[]string{"FAILED"},
-				[]string{"Error staging app"},
+				[]string{"AWWW, FAILED"},
 			))
 		})
 
@@ -495,28 +538,12 @@ var _ = Describe("start command", func() {
 			})
 		})
 
-		It("tells the user about the failure when waiting for the app to start times out", func() {
+		It("tells the user about the failure when waiting for the app to stage times out", func() {
 			displayApp := &testcmd.FakeAppDisplayer{}
-			appInstance := models.AppInstanceFields{}
-			appInstance.State = models.InstanceStarting
-			appInstance2 := models.AppInstanceFields{}
-			appInstance2.State = models.InstanceStarting
-			appInstance3 := models.AppInstanceFields{}
-			appInstance3.State = models.InstanceStarting
-			appInstance4 := models.AppInstanceFields{}
-			appInstance4.State = models.InstanceDown
-			appInstance5 := models.AppInstanceFields{}
-			appInstance5.State = models.InstanceDown
-			appInstance6 := models.AppInstanceFields{}
-			appInstance6.State = models.InstanceDown
-			defaultInstanceResponses = [][]models.AppInstanceFields{
-				[]models.AppInstanceFields{appInstance, appInstance2},
-				[]models.AppInstanceFields{appInstance3, appInstance4},
-				[]models.AppInstanceFields{appInstance5, appInstance6},
-			}
 
 			defaultInstanceErrorCodes = []string{errors.APP_NOT_STAGED, errors.APP_NOT_STAGED, errors.APP_NOT_STAGED}
 
+			defaultAppForStart.PackageState = "PENDING"
 			ui, _, _ := startAppWithInstancesAndErrors(displayApp, defaultAppForStart, requirementsFactory)
 
 			Expect(ui.Outputs).To(ContainSubstrings(
@@ -538,7 +565,7 @@ var _ = Describe("start command", func() {
 			appInstancesRepo := &testAppInstanaces.FakeAppInstancesRepository{}
 			args := []string{"my-app"}
 			requirementsFactory.Application = app
-			ui := callStart(args, config, requirementsFactory, displayApp, appRepo, appInstancesRepo, logRepo)
+			ui := callStart(args, config, requirementsFactory, displayApp, appRepo, appInstancesRepo, logRepo, oldLogsRepo)
 
 			Expect(ui.Outputs).To(ContainSubstrings(
 				[]string{"my-app"},
@@ -562,7 +589,7 @@ var _ = Describe("start command", func() {
 			requirementsFactory.Application = app
 
 			args := []string{"my-app"}
-			ui := callStart(args, config, requirementsFactory, displayApp, appRepo, appInstancesRepo, logRepo)
+			ui := callStart(args, config, requirementsFactory, displayApp, appRepo, appInstancesRepo, logRepo, oldLogsRepo)
 
 			Expect(ui.Outputs).To(ContainSubstrings([]string{"my-app", "is already started"}))
 
@@ -577,11 +604,12 @@ var _ = Describe("start command", func() {
 			appRepo.ReadReturns.App = defaultAppForStart
 			appInstancesRepo := &testAppInstanaces.FakeAppInstancesRepository{}
 
+			oldLogsRepo.TailLogsForReturns(errors.New("Ooops"))
 			logRepo.TailNoaaLogsForReturns(errors.New("Ooops"))
 
 			requirementsFactory.Application = defaultAppForStart
 
-			ui := callStart([]string{"my-app"}, configRepo, requirementsFactory, displayApp, appRepo, appInstancesRepo, logRepo)
+			ui := callStart([]string{"my-app"}, configRepo, requirementsFactory, displayApp, appRepo, appInstancesRepo, logRepo, oldLogsRepo)
 
 			Expect(ui.Outputs).To(ContainSubstrings(
 				[]string{"error tailing logs"},

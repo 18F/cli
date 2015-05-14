@@ -46,11 +46,11 @@ type FakeLogsNoaaRepository struct {
 
 func (fake *FakeLogsNoaaRepository) GetContainerMetrics(arg1 string, arg2 []models.AppInstanceFields) ([]models.AppInstanceFields, error) {
 	fake.getContainerMetricsMutex.Lock()
-	defer fake.getContainerMetricsMutex.Unlock()
 	fake.getContainerMetricsArgsForCall = append(fake.getContainerMetricsArgsForCall, struct {
 		arg1 string
 		arg2 []models.AppInstanceFields
 	}{arg1, arg2})
+	fake.getContainerMetricsMutex.Unlock()
 	if fake.GetContainerMetricsStub != nil {
 		return fake.GetContainerMetricsStub(arg1, arg2)
 	} else {
@@ -80,10 +80,10 @@ func (fake *FakeLogsNoaaRepository) GetContainerMetricsReturns(result1 []models.
 
 func (fake *FakeLogsNoaaRepository) RecentLogsFor(appGuid string) ([]*events.LogMessage, error) {
 	fake.recentLogsForMutex.Lock()
-	defer fake.recentLogsForMutex.Unlock()
 	fake.recentLogsForArgsForCall = append(fake.recentLogsForArgsForCall, struct {
 		appGuid string
 	}{appGuid})
+	fake.recentLogsForMutex.Unlock()
 	if fake.RecentLogsForStub != nil {
 		return fake.RecentLogsForStub(appGuid)
 	} else {
@@ -113,12 +113,12 @@ func (fake *FakeLogsNoaaRepository) RecentLogsForReturns(result1 []*events.LogMe
 
 func (fake *FakeLogsNoaaRepository) TailNoaaLogsFor(appGuid string, onConnect func(), onMessage func(*events.LogMessage)) error {
 	fake.tailNoaaLogsForMutex.Lock()
-	defer fake.tailNoaaLogsForMutex.Unlock()
 	fake.tailNoaaLogsForArgsForCall = append(fake.tailNoaaLogsForArgsForCall, struct {
 		appGuid   string
 		onConnect func()
 		onMessage func(*events.LogMessage)
 	}{appGuid, onConnect, onMessage})
+	fake.tailNoaaLogsForMutex.Unlock()
 	if fake.TailNoaaLogsForStub != nil {
 		return fake.TailNoaaLogsForStub(appGuid, onConnect, onMessage)
 	} else {
@@ -147,8 +147,8 @@ func (fake *FakeLogsNoaaRepository) TailNoaaLogsForReturns(result1 error) {
 
 func (fake *FakeLogsNoaaRepository) Close() {
 	fake.closeMutex.Lock()
-	defer fake.closeMutex.Unlock()
 	fake.closeArgsForCall = append(fake.closeArgsForCall, struct{}{})
+	fake.closeMutex.Unlock()
 	if fake.CloseStub != nil {
 		fake.CloseStub()
 	}

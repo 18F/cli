@@ -10,6 +10,7 @@ import (
 	"time"
 
 	. "github.com/cloudfoundry/cli/cf/i18n"
+	"github.com/cloudfoundry/loggregatorlib/logmessage"
 	"github.com/cloudfoundry/noaa/events"
 
 	"github.com/cloudfoundry/cli/cf"
@@ -18,7 +19,6 @@ import (
 	"github.com/cloudfoundry/cli/cf/api/applications"
 	"github.com/cloudfoundry/cli/cf/command_metadata"
 	"github.com/cloudfoundry/cli/cf/configuration/core_config"
-	"github.com/cloudfoundry/cli/cf/errors"
 	"github.com/cloudfoundry/cli/cf/models"
 	"github.com/cloudfoundry/cli/cf/requirements"
 	"github.com/cloudfoundry/cli/cf/terminal"
@@ -40,6 +40,7 @@ type Start struct {
 	appReq           requirements.ApplicationRequirement
 	appRepo          applications.ApplicationRepository
 	appInstancesRepo app_instances.AppInstancesRepository
+	oldLogsRepo      api.OldLogsRepository
 	logRepo          api.LogsNoaaRepository
 
 	StartupTimeout time.Duration
@@ -56,7 +57,7 @@ type ApplicationStagingWatcher interface {
 	ApplicationWatchStaging(app models.Application, orgName string, spaceName string, startCommand func(app models.Application) (models.Application, error)) (updatedApp models.Application, err error)
 }
 
-func NewStart(ui terminal.UI, config core_config.Reader, appDisplayer ApplicationDisplayer, appRepo applications.ApplicationRepository, appInstancesRepo app_instances.AppInstancesRepository, logRepo api.LogsNoaaRepository) (cmd *Start) {
+func NewStart(ui terminal.UI, config core_config.Reader, appDisplayer ApplicationDisplayer, appRepo applications.ApplicationRepository, appInstancesRepo app_instances.AppInstancesRepository, logRepo api.LogsNoaaRepository, oldLogsRepo api.OldLogsRepository) (cmd *Start) {
 	cmd = new(Start)
 	cmd.ui = ui
 	cmd.config = config
@@ -64,6 +65,7 @@ func NewStart(ui terminal.UI, config core_config.Reader, appDisplayer Applicatio
 	cmd.appRepo = appRepo
 	cmd.appInstancesRepo = appInstancesRepo
 	cmd.logRepo = logRepo
+	cmd.oldLogsRepo = oldLogsRepo
 
 	cmd.PingerThrottle = DefaultPingerThrottle
 
@@ -141,16 +143,25 @@ func (cmd *Start) ApplicationStart(app models.Application, orgName, spaceName st
 }
 
 func (cmd *Start) ApplicationWatchStaging(app models.Application, orgName, spaceName string, start func(app models.Application) (models.Application, error)) (updatedApp models.Application, err error) {
-	stopLoggingChan := make(chan bool, 1)
+	var isConnected bool
 	loggingStartedChan := make(chan bool)
 	doneLoggingChan := make(chan bool)
 
 	go cmd.tailStagingLogs(app, loggingStartedChan, doneLoggingChan)
+	timeout := make(chan struct{})
 	go func() {
-		<-stopLoggingChan
-		cmd.logRepo.Close()
+		time.Sleep(20 * time.Second)
+		close(timeout)
 	}()
-	<-loggingStartedChan // block until we have established connection to Loggregator
+
+	select {
+	case <-timeout:
+		cmd.ui.Warn("timeout connecting to log server, no log will be shown")
+		break
+	case <-loggingStartedChan: // block until we have established connection to Loggregator
+		isConnected = true
+		break
+	}
 
 	updatedApp, apiErr := start(app)
 	if apiErr != nil {
@@ -159,7 +170,12 @@ func (cmd *Start) ApplicationWatchStaging(app models.Application, orgName, space
 	}
 
 	isStaged := cmd.waitForInstancesToStage(updatedApp)
-	stopLoggingChan <- true
+
+	if isConnected { //only close when actually connected, else CLI hangs at closing consumer connection
+		// cmd.logRepo.Close()
+		cmd.oldLogsRepo.Close()
+	}
+
 	<-doneLoggingChan
 
 	cmd.ui.Say("")
@@ -201,6 +217,16 @@ func (cmd *Start) SetStartTimeoutInSeconds(timeout int) {
 	cmd.StartupTimeout = time.Duration(timeout) * time.Second
 }
 
+func simpleOldLogMessageOutput(logMsg *logmessage.LogMessage) (msgText string) {
+	msgText = string(logMsg.GetMessage())
+	reg, err := regexp.Compile("[\n\r]+$")
+	if err != nil {
+		return
+	}
+	msgText = reg.ReplaceAllString(msgText, "")
+	return
+}
+
 func simpleLogMessageOutput(logMsg *events.LogMessage) (msgText string) {
 	msgText = string(logMsg.GetMessage())
 	reg, err := regexp.Compile("[\n\r]+$")
@@ -216,11 +242,16 @@ func (cmd Start) tailStagingLogs(app models.Application, startChan, doneChan cha
 		startChan <- true
 	}
 
-	err := cmd.logRepo.TailNoaaLogsFor(app.Guid, onConnect, func(msg *events.LogMessage) {
-		if msg.GetSourceType() == LogMessageTypeStaging {
-			cmd.ui.Say(simpleLogMessageOutput(msg))
+	err := cmd.oldLogsRepo.TailLogsFor(app.Guid, onConnect, func(msg *logmessage.LogMessage) {
+		if msg.GetSourceName() == LogMessageTypeStaging {
+			cmd.ui.Say(simpleOldLogMessageOutput(msg))
 		}
 	})
+	// err := cmd.logRepo.TailNoaaLogsFor(app.Guid, onConnect, func(msg *events.LogMessage) {
+	// 	if msg.GetSourceType() == LogMessageTypeStaging {
+	// 		cmd.ui.Say(simpleLogMessageOutput(msg))
+	// 	}
+	// })
 
 	if err != nil {
 		cmd.ui.Warn(T("Warning: error tailing logs"))
@@ -231,25 +262,32 @@ func (cmd Start) tailStagingLogs(app models.Application, startChan, doneChan cha
 	close(doneChan)
 }
 
-func isStagingError(err error) bool {
-	httpError, ok := err.(errors.HttpError)
-	return ok && httpError.ErrorCode() == errors.APP_NOT_STAGED
-}
-
 func (cmd Start) waitForInstancesToStage(app models.Application) bool {
 	stagingStartTime := time.Now()
-	_, err := cmd.appInstancesRepo.GetInstances(app.Guid)
 
-	for isStagingError(err) && time.Since(stagingStartTime) < cmd.StagingTimeout {
-		cmd.ui.Wait(cmd.PingerThrottle)
-		_, err = cmd.appInstancesRepo.GetInstances(app.Guid)
+	var err error
+
+	if cmd.StagingTimeout == 0 {
+		app, err = cmd.appRepo.GetApp(app.Guid)
+	} else {
+		for app.PackageState != "STAGED" && app.PackageState != "FAILED" && time.Since(stagingStartTime) < cmd.StagingTimeout {
+			app, err = cmd.appRepo.GetApp(app.Guid)
+			if err != nil {
+				break
+			}
+			cmd.ui.Wait(cmd.PingerThrottle)
+		}
 	}
 
-	if err != nil && !isStagingError(err) {
+	if err != nil {
+		cmd.ui.Failed(err.Error())
+	}
+
+	if app.PackageState == "FAILED" {
 		cmd.ui.Say("")
 		cmd.ui.Failed(T("{{.Err}}\n\nTIP: use '{{.Command}}' for more information",
 			map[string]interface{}{
-				"Err":     err.Error(),
+				"Err":     app.StagingFailedReason,
 				"Command": terminal.CommandColor(fmt.Sprintf("%s logs %s --recent", cf.Name(), app.Name))}))
 	}
 

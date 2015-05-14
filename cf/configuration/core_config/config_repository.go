@@ -1,6 +1,7 @@
 package core_config
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/cloudfoundry/cli/cf/configuration"
@@ -62,6 +63,9 @@ type Reader interface {
 	IsLoggedIn() bool
 	IsSSLDisabled() bool
 	IsMinApiVersion(string) bool
+	IsMinCliVersion(string) bool
+	MinCliVersion() string
+	MinRecommendedCliVersion() string
 
 	AsyncTimeout() uint
 	Trace() string
@@ -78,6 +82,8 @@ type ReadWriter interface {
 	ClearSession()
 	SetApiEndpoint(string)
 	SetApiVersion(string)
+	SetMinCliVersion(string)
+	SetMinRecommendedCliVersion(string)
 	SetAuthenticationEndpoint(string)
 	SetLoggregatorEndpoint(string)
 	SetDopplerEndpoint(string)
@@ -164,10 +170,17 @@ func (c *ConfigRepository) LoggregatorEndpoint() (logEndpoint string) {
 }
 
 func (c *ConfigRepository) DopplerEndpoint() (logEndpoint string) {
+	//revert this in v7.0, once CC advertise doppler endpoint, and
+	//everyone has migrated from loggregator to doppler
+
+	// c.read(func() {
+	// 	logEndpoint = c.data.DopplerEndPoint
+	// })
 	c.read(func() {
-		logEndpoint = c.data.DopplerEndPoint
+		logEndpoint = c.data.LoggregatorEndPoint
 	})
-	return
+
+	return strings.Replace(logEndpoint, "loggregator", "doppler", 1)
 }
 
 func (c *ConfigRepository) UaaEndpoint() (uaaEndpoint string) {
@@ -276,6 +289,31 @@ func (c *ConfigRepository) IsMinApiVersion(v string) bool {
 	return apiVersion >= v
 }
 
+func (c *ConfigRepository) IsMinCliVersion(version string) bool {
+	if version == "BUILT_FROM_SOURCE" {
+		return true
+	}
+	var minCliVersion string
+	c.read(func() {
+		minCliVersion = c.data.MinCliVersion
+	})
+	return version >= minCliVersion
+}
+
+func (c *ConfigRepository) MinCliVersion() (minCliVersion string) {
+	c.read(func() {
+		minCliVersion = c.data.MinCliVersion
+	})
+	return
+}
+
+func (c *ConfigRepository) MinRecommendedCliVersion() (minRecommendedCliVersion string) {
+	c.read(func() {
+		minRecommendedCliVersion = c.data.MinRecommendedCliVersion
+	})
+	return
+}
+
 func (c *ConfigRepository) AsyncTimeout() (timeout uint) {
 	c.read(func() {
 		timeout = c.data.AsyncTimeout
@@ -331,6 +369,18 @@ func (c *ConfigRepository) SetApiEndpoint(endpoint string) {
 func (c *ConfigRepository) SetApiVersion(version string) {
 	c.write(func() {
 		c.data.ApiVersion = version
+	})
+}
+
+func (c *ConfigRepository) SetMinCliVersion(version string) {
+	c.write(func() {
+		c.data.MinCliVersion = version
+	})
+}
+
+func (c *ConfigRepository) SetMinRecommendedCliVersion(version string) {
+	c.write(func() {
+		c.data.MinRecommendedCliVersion = version
 	})
 }
 
