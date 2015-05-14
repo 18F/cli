@@ -5,6 +5,9 @@ install:
   - go get -v code.google.com/p/go.tools/cmd/vet
   - go get -v github.com/tools/godep
   - go get -v github.com/onsi/ginkgo/ginkgo
+  - go get github.com/onsi/gomega
   - go get -u github.com/maximilien/i18n4go/i18n4go
+  - go get -v -t ./...
+  - export PATH=$PATH:$HOME/gopath/bin
 script:  bin/test --compilers=2
 
