@@ -5,7 +5,6 @@ install:
   - go get -v code.google.com/p/go.tools/cmd/vet
   - go get -v github.com/tools/godep
   - go get -v github.com/onsi/ginkgo/ginkgo
+  - go get -u github.com/maximilien/i18n4go/i18n4go
 script:  bin/test --compilers=2
-branches:
-  only:
-  - master
+
