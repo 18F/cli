@@ -138,10 +138,19 @@ func copyPathToPath(fromPath, toPath string) (err error) {
 }
 
 func loadIgnoreFile(dir string) CfIgnore {
-	fileContents, err := ioutil.ReadFile(filepath.Join(dir, ".cfignore"))
-	if err == nil {
+	cfignorePath := filepath.Join(dir, ".cfignore")
+	if _, err := os.Stat(cfignorePath); err == nil {
+		fileContents, _ := ioutil.ReadFile(cfignorePath)
 		return NewCfIgnore(string(fileContents))
 	} else {
-		return NewCfIgnore("")
+		// LATER: Should we extend to other VCS systems beyond .gitignore
+		gitContents, err2 := ioutil.ReadFile(filepath.Join(dir, ".gitignore"))
+		if err2 == nil {
+			// This works because .cfignore is same format as .gitignore
+			return NewCfIgnore(string(gitContents))
+		}
 	}
+
+	// otherwise, just use default config with a few basics
+	return NewCfIgnore("")
 }

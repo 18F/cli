@@ -50,6 +50,38 @@ var _ = Describe("AppFiles", func() {
 			}))
 		})
 
+		It("excludes files based on the .gitignore file", func() {
+			appPath := filepath.Join(fixturePath, "app-with-gitignore")
+
+			// cp gitignore to .gitignore because we can't check it into repo with that name and also commit files
+			escapedGitignorePath := filepath.Join(appPath, "gitignore")
+			gitignorePath := filepath.Join(appPath, ".gitignore")
+			renameErr := os.Rename(escapedGitignorePath, gitignorePath)
+			Expect(renameErr).ShouldNot(HaveOccurred())
+
+			defer os.Rename(gitignorePath, escapedGitignorePath)
+
+			files, err := appFiles.AppFilesInDir(appPath)
+			Expect(err).ShouldNot(HaveOccurred())
+
+			paths := []string{}
+			for _, file := range files {
+				paths = append(paths, file.Path)
+			}
+
+			Expect(paths).To(Equal([]string{
+				"dir1",
+				"dir1/child-dir",
+				"dir1/child-dir/file3.txt",
+				"dir1/file1.txt",
+				"dir2",
+
+				// TODO: this should be excluded.
+				// .cfignore doesn't handle ** patterns right now
+				"dir2/child-dir2",
+			}))
+		})
+
 		// NB: on windows, you can never rely on the size of a directory being zero
 		// see: http://msdn.microsoft.com/en-us/library/windows/desktop/aa364946(v=vs.85).aspx
 		// and: https://www.pivotaltracker.com/story/show/70470232

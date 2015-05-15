@@ -11,8 +11,7 @@ type CfIgnore interface {
 	FileShouldBeIgnored(path string) bool
 }
 
-func NewCfIgnore(text string) CfIgnore {
-	patterns := []ignorePattern{}
+func appendIgnorePatterns(patterns []ignorePattern, text string) []ignorePattern {
 	lines := strings.Split(text, "\n")
 	lines = append(defaultIgnoreLines, lines...)
 
@@ -33,6 +32,12 @@ func NewCfIgnore(text string) CfIgnore {
 		}
 	}
 
+	return patterns
+}
+
+func NewCfIgnore(text string) CfIgnore {
+	patterns := []ignorePattern{}
+	patterns = appendIgnorePatterns(patterns, text)
 	return cfIgnore(patterns)
 }
 
